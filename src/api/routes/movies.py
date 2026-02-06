@@ -386,14 +386,19 @@ async def add_movie_to_radarr(request: AddMovieRequest):
 
 
 def regenerate_weeks_with_movie(movie_title: str):
-    """Find and regenerate all weeks containing a specific movie."""
+    """Find and regenerate all weeks containing a specific movie.
+
+    Reconstructs BoxOfficeMovie objects from stored JSON and re-matches
+    against the current Radarr library (no re-fetching from Trakt).
+    """
+    from ...core.boxoffice import BoxOfficeMovie, match_box_office_to_radarr
+
     weekly_pages_dir = Path(settings.boxarr_data_directory) / "weekly_pages"
     radarr_service = RadarrService()
     generator = WeeklyDataGenerator(radarr_service)
 
-    # Get updated Radarr library
-    # Always bypass cache so recently added movies are visible to the matcher
-    radarr_movies = radarr_service.get_all_movies(ignore_cache=True)
+    # Bust cache so recently added movies are visible
+    radarr_service.bust_cache()
 
     # Search all metadata files
     for json_file in weekly_pages_dir.glob("*.json"):
@@ -409,29 +414,56 @@ def regenerate_weeks_with_movie(movie_title: str):
                     break
 
             if movie_found:
-                # Regenerate this week's page
                 year = metadata["year"]
                 week = metadata["week"]
                 logger.info(
                     f"Regenerating week {year}W{week:02d} after adding {movie_title}"
                 )
 
-                # The generator will re-match with updated Radarr data
-                from ...core.boxoffice import BoxOfficeService
-                from ...core.matcher import MovieMatcher
+                # Reconstruct BoxOfficeMovie objects from stored JSON
+                box_office_movies = _reconstruct_movies_from_json(metadata)
 
-                boxoffice_service = BoxOfficeService()
-                matcher = MovieMatcher()
-
-                # Get week's data
-                box_office_movies = boxoffice_service.fetch_weekend_box_office(
-                    year, week
+                # Re-match against current Radarr library
+                match_results = match_box_office_to_radarr(
+                    box_office_movies, radarr_service
                 )
-                matcher.build_movie_index(radarr_movies)
-                match_results = matcher.match_movies(box_office_movies, radarr_movies)
 
                 # Generate updated data file
-                generator.generate_weekly_data(match_results, year, week, radarr_movies)
+                generator.generate_weekly_data(match_results, year, week)
         except Exception as e:
             logger.error(f"Error processing {json_file}: {e}")
             continue
+
+
+def _reconstruct_movies_from_json(metadata: dict) -> list:
+    """Reconstruct BoxOfficeMovie objects from stored JSON metadata."""
+    from ...core.boxoffice import BoxOfficeMovie
+
+    movies = []
+    for m in metadata.get("movies", []):
+        genres_raw = m.get("genres")
+        if isinstance(genres_raw, str) and genres_raw:
+            genres_list = [g.strip() for g in genres_raw.split(",")]
+        elif isinstance(genres_raw, list):
+            genres_list = genres_raw
+        else:
+            genres_list = None
+
+        movies.append(
+            BoxOfficeMovie(
+                rank=m.get("rank", 0),
+                title=m.get("title", "Unknown"),
+                year=m.get("year"),
+                revenue=m.get("revenue"),
+                tmdb_id=m.get("tmdb_id"),
+                imdb_id=m.get("imdb_id"),
+                overview=m.get("overview"),
+                runtime=m.get("runtime"),
+                certification=m.get("certification"),
+                genres=genres_list,
+                released=m.get("released"),
+                rating=m.get("rating"),
+                poster=m.get("poster"),
+            )
+        )
+    return movies

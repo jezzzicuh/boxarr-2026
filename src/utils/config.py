@@ -223,6 +223,12 @@ class Settings(BaseSettings):
         default=Path("/config"), description="Data storage directory"
     )
 
+    # Trakt Configuration
+    trakt_client_id: str = Field(default="", description="Trakt API client ID")
+    trakt_api_url: str = Field(
+        default="https://api.trakt.tv", description="Trakt API base URL"
+    )
+
     # Logging Configuration
     log_level: str = Field(
         default="INFO", description="Logging level (DEBUG, INFO, WARNING, ERROR)"
@@ -261,6 +267,15 @@ class Settings(BaseSettings):
         if len(s) > 20:
             raise ValueError("Auto tag must be at most 20 characters")
         return s
+
+    @validator("trakt_client_id")
+    def validate_trakt_client_id(cls, v: str) -> str:
+        """Check for Trakt client ID from environment if not set."""
+        if not v:
+            env_key = os.getenv("TRAKT_CLIENT_ID", "")
+            if env_key:
+                return env_key
+        return v
 
     @validator("boxarr_api_port")
     def validate_api_port_different(cls, v: int, values: Dict) -> int:
@@ -365,6 +380,11 @@ class Settings(BaseSettings):
                             attr_name = f"boxarr_{key}"
                             if hasattr(self, attr_name):
                                 setattr(self, attr_name, value)
+                elif section == "trakt" and isinstance(values, dict):
+                    for key, value in values.items():
+                        attr_name = f"trakt_{key}"
+                        if hasattr(self, attr_name):
+                            setattr(self, attr_name, value)
                 else:
                     # Top-level attributes (like log_level)
                     if hasattr(self, section):
@@ -404,7 +424,7 @@ class Settings(BaseSettings):
     @property
     def is_configured(self) -> bool:
         """Check if minimum configuration is present."""
-        return bool(self.radarr_api_key and self.radarr_url)
+        return bool(self.radarr_api_key and self.radarr_url and self.trakt_client_id)
 
     @property
     def cards_per_row(self) -> Dict[str, int]:

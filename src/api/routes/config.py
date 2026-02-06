@@ -22,6 +22,7 @@ class ConfigResponse(BaseModel):
     radarr_url: str
     radarr_api_key: str
     radarr_configured: bool
+    trakt_configured: bool
     scheduler_enabled: bool
     auto_add: bool
 
@@ -36,6 +37,7 @@ class TestConfigRequest(BaseModel):
 class SaveConfigRequest(BaseModel):
     """Save configuration request model."""
 
+    trakt_client_id: str = ""
     radarr_url: str
     radarr_api_key: str
     radarr_root_folder: str = "/movies"
@@ -95,6 +97,7 @@ async def get_configuration():
         radarr_url=str(current_settings.radarr_url),
         radarr_api_key="***" if current_settings.radarr_api_key else "",
         radarr_configured=bool(current_settings.radarr_api_key),
+        trakt_configured=bool(current_settings.trakt_client_id),
         scheduler_enabled=current_settings.boxarr_scheduler_enabled,
         auto_add=current_settings.boxarr_features_auto_add,
     )
@@ -249,6 +252,7 @@ async def save_configuration(config: SaveConfigRequest):
                 }
 
         config_data = {
+            "trakt": {"client_id": config.trakt_client_id},
             "radarr": radarr_config,
             "boxarr": {
                 "scheduler": {

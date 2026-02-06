@@ -1,18 +1,16 @@
 """Core business logic for Boxarr."""
 
-from .boxoffice import BoxOfficeMovie, BoxOfficeService
+from .boxoffice import BoxOfficeMovie, BoxOfficeService, MatchResult, match_box_office_to_radarr
 from .exceptions import (
     BoxarrException,
     BoxOfficeError,
     ConfigurationError,
-    MovieMatchingError,
     RadarrAuthenticationError,
     RadarrConnectionError,
     RadarrError,
     RadarrNotFoundError,
     SchedulerError,
 )
-from .matcher import MatchResult, MovieMatcher
 from .radarr import MovieStatus, QualityProfile, RadarrMovie, RadarrService
 from .scheduler import BoxarrScheduler
 
@@ -20,7 +18,6 @@ __all__ = [
     # Services
     "BoxOfficeService",
     "RadarrService",
-    "MovieMatcher",
     "BoxarrScheduler",
     # Data classes
     "BoxOfficeMovie",
@@ -28,6 +25,8 @@ __all__ = [
     "QualityProfile",
     "MovieStatus",
     "MatchResult",
+    # Functions
+    "match_box_office_to_radarr",
     # Exceptions
     "BoxarrException",
     "ConfigurationError",
@@ -36,6 +35,5 @@ __all__ = [
     "RadarrConnectionError",
     "RadarrAuthenticationError",
     "RadarrNotFoundError",
-    "MovieMatchingError",
     "SchedulerError",
 ]

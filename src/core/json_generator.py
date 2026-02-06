@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional
 
 from ..utils.config import settings
 from ..utils.logger import get_logger
-from .matcher import MatchResult
+from .boxoffice import MatchResult
 from .models import MovieStatus
 from .radarr import RadarrService
 
@@ -93,26 +93,44 @@ class WeeklyDataGenerator:
         # Prepare movie data
         movies_data = []
         for result in match_results:
-            movie_data = {
-                "rank": result.box_office_movie.rank,
-                "title": result.box_office_movie.title,
-                "weekend_gross": result.box_office_movie.weekend_gross,
-                "total_gross": result.box_office_movie.total_gross,
+            bom = result.box_office_movie
+
+            # Use Trakt data for metadata (available for both matched and unmatched)
+            genres_str = (
+                ", ".join((bom.genres or [])[:2]) if bom.genres else None
+            )
+            overview = (
+                bom.overview[:150] + "..."
+                if bom.overview and len(bom.overview) > 150
+                else bom.overview
+            )
+
+            movie_data: Dict[str, Any] = {
+                "rank": bom.rank,
+                "title": bom.title,
+                "year": bom.year,
+                "revenue": bom.revenue,
+                "weekend_gross": bom.revenue,  # Alias for backward template compat
+                "total_gross": None,  # Trakt doesn't provide cumulative gross
+                "tmdb_id": bom.tmdb_id,
+                "imdb_id": bom.imdb_id,
+                "overview": overview,
+                "genres": genres_str,
+                "certification": bom.certification,
+                "runtime": bom.runtime,
+                "rating": bom.rating,
+                "released": bom.released,
+                "poster": bom.poster,
+                # Radarr fields (defaults for unmatched)
                 "radarr_id": None,
                 "radarr_title": None,
                 "status": "Not in Radarr",
                 "status_color": "#718096",
-                "status_icon": "➕",
+                "status_icon": "\u2795",
                 "quality_profile_id": None,
                 "quality_profile_name": None,
                 "has_file": False,
                 "can_upgrade_quality": False,
-                "poster": None,
-                "year": None,
-                "genres": None,
-                "overview": None,
-                "imdb_id": None,
-                "tmdb_id": None,
             }
 
             if result.is_matched and result.radarr_movie:
@@ -126,16 +144,7 @@ class WeeklyDataGenerator:
                             movie.qualityProfileId, ""
                         ),
                         "has_file": movie.hasFile,
-                        "year": movie.year,
-                        "genres": ", ".join(movie.genres[:2]) if movie.genres else None,
-                        "overview": (
-                            movie.overview[:150] + "..."
-                            if movie.overview and len(movie.overview) > 150
-                            else movie.overview
-                        ),
-                        "imdb_id": movie.imdbId,
-                        "tmdb_id": movie.tmdbId,
-                        "poster": movie.poster_url,
+                        "poster": movie.poster_url or bom.poster,
                         "can_upgrade_quality": bool(
                             movie.qualityProfileId
                             and ultra_hd_id
@@ -149,56 +158,37 @@ class WeeklyDataGenerator:
                 if movie.hasFile:
                     movie_data["status"] = "Downloaded"
                     movie_data["status_color"] = "#48bb78"
-                    movie_data["status_icon"] = "✅"
+                    movie_data["status_icon"] = "\u2705"
                 elif movie.status == MovieStatus.RELEASED and movie.isAvailable:
                     movie_data["status"] = "Missing"
                     movie_data["status_color"] = "#f56565"
-                    movie_data["status_icon"] = "❌"
+                    movie_data["status_icon"] = "\u274c"
                 elif movie.status == MovieStatus.IN_CINEMAS:
                     movie_data["status"] = "In Cinemas"
                     movie_data["status_color"] = "#f6ad55"
-                    movie_data["status_icon"] = "🎬"
+                    movie_data["status_icon"] = "\U0001f3ac"
                 else:
                     movie_data["status"] = "Pending"
                     movie_data["status_color"] = "#ed8936"
-                    movie_data["status_icon"] = "⏳"
+                    movie_data["status_icon"] = "\u23f3"
             else:
-                # For unmatched movies, ALWAYS try to get data from TMDB
-                # This ensures we have poster and description for dashboard display
-                if self.radarr_service:
+                # For unmatched movies, fetch poster from TMDB via Radarr
+                if self.radarr_service and bom.tmdb_id and not movie_data.get("poster"):
                     try:
-                        # Search for movie in TMDB via Radarr
                         search_results = self.radarr_service.search_movie(
-                            result.box_office_movie.title
+                            f"tmdb:{bom.tmdb_id}"
                         )
                         if search_results and len(search_results) > 0:
-                            # Use the first result
                             tmdb_movie = search_results[0]
-                            movie_data.update(
-                                {
-                                    "tmdb_id": tmdb_movie.get("tmdbId"),
-                                    "year": tmdb_movie.get("year"),
-                                    "overview": (
-                                        tmdb_movie.get("overview", "")[:150] + "..."
-                                        if tmdb_movie.get("overview")
-                                        and len(tmdb_movie.get("overview", "")) > 150
-                                        else tmdb_movie.get("overview")
-                                    ),
-                                    "poster": tmdb_movie.get("remotePoster"),
-                                    "imdb_id": tmdb_movie.get("imdbId"),
-                                    "genres": (
-                                        ", ".join(tmdb_movie.get("genres", [])[:2])
-                                        if tmdb_movie.get("genres")
-                                        else None
-                                    ),
-                                }
-                            )
-                            logger.info(
-                                f"Enriched '{result.box_office_movie.title}' with TMDB data"
+                            poster = tmdb_movie.get("remotePoster")
+                            if poster:
+                                movie_data["poster"] = poster
+                            logger.debug(
+                                f"Enriched poster for '{bom.title}' via TMDB lookup"
                             )
                     except Exception as e:
                         logger.warning(
-                            f"Could not fetch TMDB data for '{result.box_office_movie.title}': {e}"
+                            f"Could not fetch poster for '{bom.title}': {e}"
                         )
 
             movies_data.append(movie_data)

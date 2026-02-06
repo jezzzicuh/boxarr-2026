@@ -432,7 +432,9 @@ async def setup_page(request: Request):
         get_template_context(
             request,
             radarr_configured=bool(settings.radarr_api_key),
-            is_configured=bool(settings.radarr_api_key),
+            is_configured=settings.is_configured,
+            # Trakt settings
+            trakt_client_id=settings.trakt_client_id,
             # Current settings for prefilling
             radarr_url=str(settings.radarr_url),
             radarr_api_key=settings.radarr_api_key,  # Show actual API key for editing
@@ -732,7 +734,7 @@ async def get_widget_data() -> WidgetData:
             {
                 "rank": m.get("rank"),
                 "title": m.get("title"),
-                "gross": m.get("weekend_gross"),
+                "gross": m.get("revenue") or m.get("weekend_gross"),
             }
             for m in metadata.get("movies", [])[:10]
         ],

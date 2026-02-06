@@ -7,13 +7,13 @@ Boxarr is a FastAPI-based web application that bridges box office data with Rada
 ### High-Level Architecture
 
 ```
-Box Office Mojo (Web Scraping)
+Trakt API (REST, current week box office)
     ↓
-Movie Matching Algorithm
+TMDB ID Matching (exact match against Radarr)
     ↓
 Radarr Integration (API)
     ↓
-JSON Data Generation + TMDB Enrichment
+JSON Data Generation + Poster Enrichment
     ↓
 Jinja2 Template Rendering (Server-side)
     ↓
@@ -23,11 +23,10 @@ JavaScript Polling (Client-side updates)
 ### Core Components
 
 #### Business Logic (`src/core/`)
-- **boxoffice.py**: BeautifulSoup-based scraper for Box Office Mojo
-- **radarr.py**: Complete Radarr v3+ API client
-- **matcher.py**: Sophisticated movie title matching algorithm
+- **boxoffice.py**: Trakt API client for box office data + TMDB ID matching
+- **radarr.py**: Complete Radarr v3+ API client (includes `find_movie_by_tmdb_id`)
 - **scheduler.py**: APScheduler for weekly automation
-- **json_generator.py**: Metadata generation with TMDB enrichment
+- **json_generator.py**: Metadata generation with poster enrichment
 - **exceptions.py**: Custom exception hierarchy
 
 #### Web Application (`src/api/`)
@@ -53,7 +52,6 @@ JavaScript Polling (Client-side updates)
 - **Python 3.10+**: Core language (3.11 recommended)
 - **FastAPI**: Modern async web framework
 - **Pydantic**: Data validation and settings management
-- **BeautifulSoup4**: HTML parsing for web scraping
 - **APScheduler**: Cron-based task scheduling
 - **Jinja2**: Server-side template rendering
 - **httpx**: Async HTTP client for API calls
@@ -152,9 +150,8 @@ make quality-check || {
 boxarr/
 ├── src/
 │   ├── core/               # Business logic
-│   │   ├── boxoffice.py   # Box Office Mojo scraper
+│   │   ├── boxoffice.py   # Trakt API client + TMDB ID matching
 │   │   ├── radarr.py      # Radarr API client
-│   │   ├── matcher.py     # Movie matching algorithm
 │   │   ├── scheduler.py   # Task scheduling
 │   │   └── json_generator.py # Data generation
 │   ├── api/               # Web application
@@ -186,33 +183,14 @@ boxarr/
 
 ## Key Implementation Details
 
-### Movie Matching Algorithm
+### Movie Matching
 
-The matcher (`src/core/matcher.py`) handles complex real-world scenarios:
+Movies are matched between Trakt box office data and Radarr by exact TMDB ID lookup. The Trakt API provides TMDB IDs for each movie, and Radarr stores TMDB IDs for its library entries. This eliminates the need for fuzzy title matching.
 
-1. **Normalization Pipeline**:
-   - Remove punctuation and special characters
-   - Handle articles ("The", "A", "An")
-   - Convert Roman numerals to numbers
-   - Normalize subtitles and colons
-
-2. **Matching Strategies**:
-   - Exact match (highest confidence)
-   - Normalized match (high confidence)
-   - Special cases (medium confidence)
-   - Fuzzy matching with threshold (low confidence)
-
-3. **Year Disambiguation**:
-   - Prioritizes movies from current/recent years
-   - Falls back to title-only matching
-
-Example transformations:
-```python
-"Spider-Man: No Way Home" → "Spider-Man No Way Home"
-"Fast & Furious Presents: Hobbs & Shaw" → "Fast and Furious Presents Hobbs and Shaw"
-"Frozen II" → "Frozen 2"
-"The Batman" → "Batman"
-```
+The matching flow (`src/core/boxoffice.py::match_box_office_to_radarr`):
+1. For each box office movie with a TMDB ID, call `radarr_service.find_movie_by_tmdb_id(tmdb_id)`
+2. If found, create a matched `MatchResult`; otherwise, unmatched
+3. Movies without TMDB IDs are automatically unmatched (skipped)
 
 ### Data Persistence Strategy
 
@@ -231,13 +209,12 @@ Example transformations:
    - Updates only status and quality fields
    - Minimal network overhead
 
-### TMDB Data Enrichment
+### Poster Enrichment
 
-For movies not in Radarr:
-1. Search via Radarr's TMDB lookup endpoint
-2. Extract poster, overview, genres, year
-3. Store in JSON for future rendering
-4. Display with "Add to Radarr" button
+Trakt provides metadata (overview, genres, certification, rating, runtime) but not poster URLs.
+- For matched movies: poster comes from `radarr_movie.poster_url`
+- For unmatched movies: poster fetched via Radarr's TMDB lookup (`search_movie(f"tmdb:{tmdb_id}")`)
+- All data stored in weekly JSON files for future rendering
 
 ### Scheduling System
 
@@ -250,8 +227,8 @@ Uses APScheduler with ThreadPoolExecutor:
 ## Testing Strategy
 
 ### Unit Tests Focus
-- Movie matching edge cases
-- Box office HTML parsing
+- Trakt API response parsing and retry logic
+- TMDB ID matching against Radarr
 - Configuration validation
 - Data transformation logic
 
@@ -400,7 +377,7 @@ pip install -e .
 **Type checking errors**
 ```bash
 # Install type stubs
-pip install types-requests types-beautifulsoup4
+pip install types-requests
 ```
 
 **Test failures**

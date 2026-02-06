@@ -1217,10 +1217,16 @@ function reloadScheduler() {
     };
 
     window.saveConfiguration = function() {
-        // Don't require connection test if we already have valid credentials
+        // Validate required fields
+        const traktClientId = document.getElementById('traktClientId');
         const radarrUrl = document.getElementById('radarrUrl');
         const radarrApiKey = document.getElementById('radarrApiKey');
-        
+
+        if (!traktClientId || !traktClientId.value) {
+            showMessage('Please enter your Trakt Client ID', 'error');
+            return;
+        }
+
         if (!radarrUrl.value || !radarrApiKey.value) {
             showMessage('Please enter Radarr URL and API Key', 'error');
             return;

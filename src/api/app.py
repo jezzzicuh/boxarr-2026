@@ -114,6 +114,7 @@ def create_app(scheduler: Optional[BoxarrScheduler] = None) -> FastAPI:
         return {
             "status": "healthy",
             "version": __version__,
+            "trakt_configured": bool(settings.trakt_client_id),
             "radarr_configured": bool(settings.radarr_api_key),
             "radarr_connected": radarr_connected,
             "scheduler_enabled": settings.boxarr_scheduler_enabled,
@@ -129,7 +130,9 @@ def create_app_with_scheduler() -> FastAPI:
 
     # Initialize scheduler with services
     scheduler = BoxarrScheduler(
-        boxoffice_service=BoxOfficeService(),
+        boxoffice_service=(
+            BoxOfficeService() if settings.trakt_client_id else None
+        ),
         radarr_service=RadarrService() if settings.radarr_api_key else None,
     )
 

@@ -105,7 +105,9 @@ class BoxarrApplication:
 
         # Initialize scheduler for CLI mode
         self.scheduler = BoxarrScheduler(
-            boxoffice_service=BoxOfficeService(),
+            boxoffice_service=(
+                BoxOfficeService() if settings.trakt_client_id else None
+            ),
             radarr_service=RadarrService() if settings.radarr_api_key else None,
         )
 

@@ -3,6 +3,10 @@
 
 version: 1
 
+# Trakt API (REQUIRED)
+trakt:
+  client_id: ""  # Get from https://trakt.tv/oauth/applications
+
 # Radarr connection (REQUIRED)
 radarr:
   url: "http://localhost:7878"  # Change to your Radarr URL

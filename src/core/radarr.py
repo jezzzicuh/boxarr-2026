@@ -574,6 +574,29 @@ class RadarrService:
                 return profile
         return None
 
+    def bust_cache(self) -> None:
+        """Invalidate the in-memory movie cache so the next call fetches fresh data."""
+        _movies_cache["ts"] = 0.0
+        _movies_cache["data"] = []
+
+    def find_movie_by_tmdb_id(self, tmdb_id: int) -> Optional[RadarrMovie]:
+        """
+        Look up a movie in the Radarr library by TMDB ID.
+
+        Uses the cached movie list for efficiency.
+
+        Args:
+            tmdb_id: TMDB ID to search for
+
+        Returns:
+            RadarrMovie if found, None otherwise
+        """
+        movies = self.get_all_movies()
+        for movie in movies:
+            if movie.tmdbId == tmdb_id:
+                return movie
+        return None
+
     def search_movie_by_title(self, title: str) -> Optional[RadarrMovie]:
         """
         Search for movie in library by title.

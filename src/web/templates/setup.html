@@ -34,6 +34,19 @@
         
 
         <form id="setupForm">
+            <!-- Trakt Connection Section -->
+            <div class="form-section">
+                <h2 class="section-title">Trakt Connection</h2>
+
+                <div class="form-group">
+                    <label for="traktClientId" class="form-label">Trakt Client ID</label>
+                    <input type="text" id="traktClientId" name="trakt_client_id" class="form-input"
+                           value="{{ trakt_client_id }}"
+                           placeholder="Your Trakt Client ID" required>
+                    <small class="text-muted">Get from <a href="https://trakt.tv/oauth/applications" target="_blank">trakt.tv/oauth/applications</a></small>
+                </div>
+            </div>
+
             <!-- Radarr Connection Section -->
             <div class="form-section">
                 <h2 class="section-title">Radarr Connection</h2>

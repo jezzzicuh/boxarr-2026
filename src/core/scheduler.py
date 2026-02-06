@@ -14,10 +14,9 @@ from apscheduler.triggers.cron import CronTrigger
 
 from ..utils.config import settings
 from ..utils.logger import get_logger
-from .boxoffice import BoxOfficeService
+from .boxoffice import BoxOfficeService, MatchResult, match_box_office_to_radarr
 from .exceptions import SchedulerError
 from .json_generator import WeeklyDataGenerator
-from .matcher import MatchResult, MovieMatcher
 from .models import MovieStatus
 from .radarr import RadarrService
 from .root_folder_manager import RootFolderManager
@@ -32,7 +31,6 @@ class BoxarrScheduler:
         self,
         boxoffice_service: Optional[BoxOfficeService] = None,
         radarr_service: Optional[RadarrService] = None,
-        matcher: Optional[MovieMatcher] = None,
     ):
         """
         Initialize scheduler.
@@ -40,7 +38,6 @@ class BoxarrScheduler:
         Args:
             boxoffice_service: Box office service instance
             radarr_service: Radarr service instance
-            matcher: Movie matcher instance
         """
         # Convert timezone string to tzinfo object for strict compatibility
         try:
@@ -55,7 +52,6 @@ class BoxarrScheduler:
 
         self.boxoffice_service = boxoffice_service
         self.radarr_service = radarr_service
-        self.matcher = matcher or MovieMatcher()
 
         self._executor = ThreadPoolExecutor(max_workers=2)
         self._running = False
@@ -127,23 +123,17 @@ class BoxarrScheduler:
         self._running = False
         logger.info("Scheduler stopped")
 
-    async def update_box_office(  # noqa: C901
-        self, year: Optional[int] = None, week: Optional[int] = None
-    ) -> Dict[str, Any]:
+    async def update_box_office(self) -> Dict[str, Any]:  # noqa: C901
         """
         Main job to update box office data.
 
-        Args:
-            year: Optional year to fetch (defaults to current)
-            week: Optional week number to fetch (defaults to current)
+        Fetches the current week's box office from Trakt and matches
+        against Radarr library by TMDB ID.
 
         Returns:
             Update results dictionary
         """
-        if year and week:
-            logger.info(f"Starting box office update for {year} Week {week:02d}")
-        else:
-            logger.info("Starting scheduled box office update for previous week")
+        logger.info("Starting scheduled box office update")
         start_time = datetime.now()
 
         try:
@@ -153,37 +143,24 @@ class BoxarrScheduler:
             if not self.radarr_service:
                 self.radarr_service = RadarrService()
 
-            # Determine target (top) year/week for this run
-            from datetime import timedelta
+            # Determine current year/week from most recent Friday
+            from datetime import date, timedelta
 
-            if year and week:
-                actual_year = year
-                actual_week = week
-            else:
-                # Mirror get_current_week_movies: use previous week's data
-                last_week = datetime.now() - timedelta(weeks=1)
-                _, _, actual_year, actual_week = (
-                    self.boxoffice_service.get_weekend_dates(last_week)
-                )
+            today = date.today()
+            days_since_friday = (today.weekday() - 4) % 7
+            most_recent_friday = today - timedelta(days=days_since_friday)
+            actual_year, actual_week, _ = most_recent_friday.isocalendar()
 
-            # Fetch box office movies for specified or current week
-            if year and week:
-                box_office_movies = await self._run_in_executor(
-                    self.boxoffice_service.fetch_weekend_box_office, year, week
-                )
-            else:
-                box_office_movies = await self._run_in_executor(
-                    self.boxoffice_service.get_current_week_movies
-                )
-
-            # Fetch Radarr movies
-            radarr_movies = await self._run_in_executor(
-                self.radarr_service.get_all_movies
+            # Fetch current box office from Trakt API
+            box_office_movies = await self._run_in_executor(
+                self.boxoffice_service.fetch_box_office
             )
 
-            # Match movies
+            # Match movies against Radarr by TMDB ID
             match_results = await self._run_in_executor(
-                self.matcher.match_batch, box_office_movies, radarr_movies
+                match_box_office_to_radarr,
+                box_office_movies,
+                self.radarr_service,
             )
 
             # Auto-add missing movies to Radarr with default profile (if enabled)
@@ -197,31 +174,21 @@ class BoxarrScheduler:
                 unmatched_count = len([r for r in match_results if not r.is_matched])
                 if unmatched_count > 0:
                     logger.info(
-                        f"Auto-add is disabled. {unmatched_count} movies not in Radarr, manual addition required"
+                        f"Auto-add is disabled. {unmatched_count} movies not in Radarr, "
+                        f"manual addition required"
                     )
 
-            # If movies were added, re-fetch and re-match
+            # If movies were added, bust cache and re-match
             if added_movies:
                 logger.info(
                     f"Added {len(added_movies)} movies to Radarr, re-matching..."
                 )
-                radarr_movies = await self._run_in_executor(
-                    self.radarr_service.get_all_movies
-                )
+                self.radarr_service.bust_cache()
                 match_results = await self._run_in_executor(
-                    self.matcher.match_batch, box_office_movies, radarr_movies
+                    match_box_office_to_radarr,
+                    box_office_movies,
+                    self.radarr_service,
                 )
-
-            # Get weekend dates (recompute concrete Friday/Sunday for metadata)
-            if year and week:
-                jan1 = datetime(year, 1, 1)
-                days_to_week = (week - 1) * 7
-                week_start = jan1 + timedelta(days=days_to_week)
-                days_to_friday = (4 - week_start.weekday()) % 7
-                friday = week_start + timedelta(days=days_to_friday)
-                sunday = friday + timedelta(days=2)
-            else:
-                friday, sunday, _, _ = self.boxoffice_service.get_weekend_dates()
 
             # Generate JSON data file
             page_generator = WeeklyDataGenerator(self.radarr_service)
@@ -296,10 +263,9 @@ class BoxarrScheduler:
                     "title": r.box_office_movie.title,
                     "radarr_title": r.radarr_movie.title,
                     "radarr_id": r.radarr_movie.id,
+                    "tmdb_id": r.box_office_movie.tmdb_id,
                     "status": self._get_movie_status(r.radarr_movie),
                     "has_file": r.radarr_movie.hasFile,
-                    "confidence": r.confidence,
-                    "match_method": r.match_method,
                 }
                 for r in matched
             ],
@@ -388,8 +354,12 @@ class BoxarrScheduler:
         """
         Automatically add unmatched movies to Radarr with default profile.
 
+        Uses Trakt data directly for filtering (genres, certification, year)
+        instead of searching TMDB separately.
+
         Args:
             match_results: Match results
+            top_year: Current year for re-release filtering
 
         Returns:
             List of added movie titles
@@ -407,10 +377,12 @@ class BoxarrScheduler:
         limit = settings.boxarr_features_auto_add_limit
         if limit < len(unmatched):
             logger.info(
-                f"Limiting auto-add to top {limit} movies (out of {len(unmatched)} unmatched)"
+                f"Limiting auto-add to top {limit} movies "
+                f"(out of {len(unmatched)} unmatched)"
             )
-            # Sort by rank to get top movies
-            unmatched = sorted(unmatched, key=lambda r: r.box_office_movie.rank)[:limit]
+            unmatched = sorted(unmatched, key=lambda r: r.box_office_movie.rank)[
+                :limit
+            ]
 
         if not unmatched:
             logger.info("No movies to auto-add - all top movies are already in Radarr")
@@ -430,117 +402,105 @@ class BoxarrScheduler:
             return []
 
         for result in unmatched:
-            try:
-                # Search for movie in Radarr database (TMDB)
-                search_results = await self._run_in_executor(
-                    self.radarr_service.search_movie, result.box_office_movie.title
+            bom = result.box_office_movie
+
+            if not bom.tmdb_id:
+                logger.warning(
+                    f"Skipping '{bom.title}' - no TMDB ID available for add"
                 )
+                continue
 
-                if search_results:
-                    movie_info = search_results[0]
-                    # Optional: Ignore re-releases (older than top_year - 1)
-                    if settings.boxarr_features_auto_add_ignore_rereleases:
-                        try:
-                            movie_year = movie_info.get("year")
-                            if not movie_year:
-                                rd = movie_info.get("releaseDate") or movie_info.get(
-                                    "inCinemas"
-                                )
-                                if isinstance(rd, str) and len(rd) >= 4:
-                                    movie_year = int(rd[:4])
-                            if movie_year and int(movie_year) < (top_year - 1):
-                                logger.info(
-                                    f"Skipping '{result.box_office_movie.title}' (rank #{result.box_office_movie.rank}) - "
-                                    f"release year {movie_year} older than cutoff {(top_year - 1)}"
-                                )
-                                continue
-                        except Exception:
-                            # Be permissive if metadata is missing or malformed
-                            pass
-
-                    # Apply genre filter if enabled
-                    if settings.boxarr_features_auto_add_genre_filter_enabled:
-                        movie_genres = movie_info.get("genres", [])
-
-                        if (
-                            settings.boxarr_features_auto_add_genre_filter_mode
-                            == "whitelist"
-                        ):
-                            # Check if movie has at least one whitelisted genre
-                            whitelist = (
-                                settings.boxarr_features_auto_add_genre_whitelist
-                            )
-                            if whitelist and not any(
-                                genre in whitelist for genre in movie_genres
-                            ):
-                                logger.info(
-                                    f"Skipping '{result.box_office_movie.title}' (rank #{result.box_office_movie.rank}) - "
-                                    f"genres {movie_genres} not in whitelist {whitelist}"
-                                )
-                                continue
-                        else:  # blacklist mode
-                            # Check if movie has any blacklisted genre
-                            blacklist = (
-                                settings.boxarr_features_auto_add_genre_blacklist
-                            )
-                            if blacklist and any(
-                                genre in blacklist for genre in movie_genres
-                            ):
-                                logger.info(
-                                    f"Skipping '{result.box_office_movie.title}' (rank #{result.box_office_movie.rank}) - "
-                                    f"contains blacklisted genre(s) from {blacklist}"
-                                )
-                                continue
-
-                    # Apply rating filter if enabled
-                    if settings.boxarr_features_auto_add_rating_filter_enabled:
-                        movie_rating = movie_info.get("certification")
-                        rating_whitelist = (
-                            settings.boxarr_features_auto_add_rating_whitelist
+            try:
+                # Ignore re-releases (older than top_year - 1)
+                if settings.boxarr_features_auto_add_ignore_rereleases:
+                    movie_year = bom.year
+                    if movie_year and movie_year < (top_year - 1):
+                        logger.info(
+                            f"Skipping '{bom.title}' (rank #{bom.rank}) - "
+                            f"release year {movie_year} older than "
+                            f"cutoff {top_year - 1}"
                         )
+                        continue
 
-                        if (
-                            rating_whitelist
-                            and movie_rating
-                            and movie_rating not in rating_whitelist
+                # Apply genre filter using Trakt data
+                if settings.boxarr_features_auto_add_genre_filter_enabled:
+                    movie_genres = bom.genres or []
+
+                    if (
+                        settings.boxarr_features_auto_add_genre_filter_mode
+                        == "whitelist"
+                    ):
+                        whitelist = (
+                            settings.boxarr_features_auto_add_genre_whitelist
+                        )
+                        if whitelist and not any(
+                            genre in whitelist for genre in movie_genres
                         ):
                             logger.info(
-                                f"Skipping '{result.box_office_movie.title}' (rank #{result.box_office_movie.rank}) - "
-                                f"rating '{movie_rating}' not in allowed ratings {rating_whitelist}"
+                                f"Skipping '{bom.title}' (rank #{bom.rank}) - "
+                                f"genres {movie_genres} not in "
+                                f"whitelist {whitelist}"
+                            )
+                            continue
+                    else:  # blacklist mode
+                        blacklist = (
+                            settings.boxarr_features_auto_add_genre_blacklist
+                        )
+                        if blacklist and any(
+                            genre in blacklist for genre in movie_genres
+                        ):
+                            logger.info(
+                                f"Skipping '{bom.title}' (rank #{bom.rank}) - "
+                                f"contains blacklisted genre(s) "
+                                f"from {blacklist}"
                             )
                             continue
 
-                    # Determine root folder based on genres
-                    root_folder_manager = RootFolderManager(self.radarr_service)
-                    movie_genres = movie_info.get("genres", [])
-                    root_folder = root_folder_manager.determine_root_folder(
-                        genres=movie_genres,
-                        movie_title=movie_info.get("title", "Unknown"),
+                # Apply rating filter using Trakt certification
+                if settings.boxarr_features_auto_add_rating_filter_enabled:
+                    movie_rating = bom.certification
+                    rating_whitelist = (
+                        settings.boxarr_features_auto_add_rating_whitelist
                     )
 
-                    # Add the movie with determined root folder
-                    added_movie = await self._run_in_executor(
-                        self.radarr_service.add_movie,
-                        movie_info["tmdbId"],
-                        default_profile.id,
-                        root_folder,
-                        True,  # monitored
-                        True,  # search for movie
-                    )
-                    logger.info(
-                        f"Auto-added movie to Radarr: {added_movie.title} "
-                        f"with profile '{default_profile.name}' in folder '{root_folder}'"
-                    )
-                    added_movies.append(added_movie.title)
-                else:
-                    logger.warning(
-                        f"Movie '{result.box_office_movie.title}' not found in TMDB"
-                    )
+                    if (
+                        rating_whitelist
+                        and movie_rating
+                        and movie_rating not in rating_whitelist
+                    ):
+                        logger.info(
+                            f"Skipping '{bom.title}' (rank #{bom.rank}) - "
+                            f"rating '{movie_rating}' not in "
+                            f"allowed ratings {rating_whitelist}"
+                        )
+                        continue
+
+                # Determine root folder based on Trakt genres
+                root_folder_manager = RootFolderManager(self.radarr_service)
+                movie_genres = bom.genres or []
+                root_folder = root_folder_manager.determine_root_folder(
+                    genres=movie_genres,
+                    movie_title=bom.title,
+                )
+
+                # Add the movie using TMDB ID from Trakt
+                added_movie = await self._run_in_executor(
+                    self.radarr_service.add_movie,
+                    bom.tmdb_id,
+                    default_profile.id,
+                    root_folder,
+                    True,  # monitored
+                    True,  # search for movie
+                )
+                logger.info(
+                    f"Auto-added movie to Radarr: {added_movie.title} "
+                    f"with profile '{default_profile.name}' "
+                    f"in folder '{root_folder}'"
+                )
+                added_movies.append(added_movie.title)
 
             except Exception as e:
-                logger.warning(
-                    f"Failed to auto-add {result.box_office_movie.title}: {e}"
-                )
+                logger.warning(f"Failed to auto-add {bom.title}: {e}")
 
         return added_movies
 

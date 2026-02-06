@@ -43,12 +43,6 @@ class RadarrNotFoundError(RadarrError):
     pass
 
 
-class MovieMatchingError(BoxarrException):
-    """Raised when movie matching fails."""
-
-    pass
-
-
 class SchedulerError(BoxarrException):
     """Raised when scheduler operations fail."""
 
