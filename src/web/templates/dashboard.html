@@ -589,6 +589,46 @@
     font-size: 0.9rem;
     color: var(--text-primary);
 }
+
+/* Mode Switcher */
+.mode-switcher {
+    display: flex;
+    gap: 0;
+    padding: 0.5rem 1.5rem;
+    background: var(--bg-color);
+    border-radius: 8px;
+    margin: 1rem 1.5rem 0 1.5rem;
+}
+
+.mode-btn {
+    flex: 1;
+    padding: 0.75rem 1rem;
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: all 0.2s;
+    font-weight: 500;
+}
+
+.mode-btn:first-child {
+    border-radius: 6px 0 0 6px;
+}
+
+.mode-btn:last-child {
+    border-radius: 0 6px 6px 0;
+    border-left: none;
+}
+
+.mode-btn.active {
+    background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+    color: white;
+    border-color: transparent;
+}
+
+.mode-btn:hover:not(.active) {
+    background: var(--bg-color);
+}
 </style>
 {% endblock %}
 
@@ -664,14 +704,14 @@
         
         <!-- Action Buttons -->
         <div class="action-bar">
-            <button class="action-btn" onclick="updateCurrentWeek()" 
-                    title="{% if auto_add %}Fetch latest box office data and automatically add missing movies to Radarr{% else %}Fetch latest box office data (manual add required){% endif %}">
+            <button class="action-btn" onclick="updateCurrentWeek()"
+                    title="{% if auto_add %}Fetch latest box office data from Trakt and automatically add missing movies to Radarr{% else %}Fetch latest box office data from Trakt (manual add required){% endif %}">
                 <span class="btn-icon">🔄</span> Update Last Week
             </button>
-            
+
             <button class="action-btn" onclick="showHistoricalUpdate()"
-                    title="{% if auto_add %}Fetch historical box office data and automatically add missing movies to Radarr{% else %}Fetch historical box office data (manual add required){% endif %}">
-                <span class="btn-icon">📅</span> Update Historical Week
+                    title="Re-match previously captured weeks against your current Radarr library. Note: Cannot fetch new historical data from Trakt.">
+                <span class="btn-icon">📅</span> Re-match Historical Week
             </button>
             
             <!-- Fix Missing Data Button (only shows when needed) -->
@@ -835,10 +875,21 @@
 <div id="historicalModal" class="modal">
     <div class="modal-content">
         <div class="modal-header">
-            <h3>Update Historical Data</h3>
+            <h3>Re-match Historical Data</h3>
             <button class="modal-close" onclick="closeHistoricalUpdate()">&times;</button>
         </div>
-        
+
+        <!-- Important Notice -->
+        <div style="margin: 1rem 1.5rem; padding: 1rem; background: rgba(59, 130, 246, 0.1); border-left: 3px solid #3b82f6; border-radius: 6px;">
+            <p style="margin: 0; font-size: 0.9rem; color: var(--text-primary);">
+                <strong>ℹ️ Note:</strong> This re-matches <em>previously captured</em> weeks against your current Radarr library.
+                <strong>Trakt only provides current week data</strong>, so historical data cannot be fetched retroactively.
+            </p>
+            <p style="margin: 0.5rem 0 0 0; font-size: 0.85rem; color: var(--text-secondary);">
+                💡 To build historical data, run weekly updates consistently going forward.
+            </p>
+        </div>
+
         <!-- Mode Switcher -->
         <div class="mode-switcher">
             <button class="mode-btn active" data-mode="single" onclick="switchMode('single')">Single Week</button>
@@ -851,7 +902,6 @@
                 <div class="form-group">
                     <label for="historicalYear">Year</label>
                     <select id="historicalYear" class="form-select">
-                        {% set current_year = 2025 %}
                         {% for year in range(current_year, 2019, -1) %}
                         <option value="{{ year }}" {% if year == current_year %}selected{% endif %}>{{ year }}</option>
                         {% endfor %}
@@ -874,7 +924,6 @@
                         <label>From</label>
                         <div class="range-selects">
                             <select id="startYear" class="form-select">
-                                {% set current_year = 2025 %}
                                 {% for year in range(current_year, 2019, -1) %}
                                 <option value="{{ year }}" {% if year == current_year %}selected{% endif %}>{{ year }}</option>
                                 {% endfor %}
@@ -890,7 +939,6 @@
                         <label>To</label>
                         <div class="range-selects">
                             <select id="endYear" class="form-select">
-                                {% set current_year = 2025 %}
                                 {% for year in range(current_year, 2019, -1) %}
                                 <option value="{{ year }}" {% if year == current_year %}selected{% endif %}>{{ year }}</option>
                                 {% endfor %}
@@ -931,27 +979,33 @@
             <!-- Current Behavior Section -->
             <div style="margin-top: 1.5rem; padding: 1rem; background: rgba(var(--primary-rgb), 0.05); border-radius: 8px; border: 1px solid rgba(var(--primary-rgb), 0.2);">
                 <p style="font-size: 0.9rem; color: var(--text-primary); margin-bottom: 0.75rem;">
-                    <strong>📊 Current behavior:</strong>
+                    <strong>📊 What happens during re-matching:</strong>
                 </p>
                 <div style="font-size: 0.85rem; color: var(--text-secondary);">
-                    {% if auto_add %}
-                        ✅ Auto-add is <strong style="color: var(--success-color);">ENABLED</strong> - Movies will be automatically added to Radarr
-                        {% if auto_add_filters_active %}
-                            <br>🎯 <strong>Filters active:</strong> {{ filter_descriptions | join(', ') }}
-                        {% endif %}
-                    {% else %}
-                        🔘 Auto-add is <strong style="color: var(--warning-color);">DISABLED</strong> - Movies will NOT be automatically added
-                    {% endif %}
-                    
+                    <ul style="margin: 0; padding-left: 1.5rem;">
+                        <li>Loads previously captured box office data from JSON file</li>
+                        <li>Re-matches movies against your <em>current</em> Radarr library by TMDB ID</li>
+                        <li>
+                            {% if auto_add %}
+                                ✅ Auto-add is <strong style="color: var(--success-color);">ENABLED</strong> - Missing movies will be added automatically
+                                {% if auto_add_filters_active %}
+                                    <br><span style="margin-left: 1rem;">🎯 <strong>Filters:</strong> {{ filter_descriptions | join(', ') }}</span>
+                                {% endif %}
+                            {% else %}
+                                🔘 Auto-add is <strong style="color: var(--warning-color);">DISABLED</strong> - Movies will NOT be added automatically
+                            {% endif %}
+                        </li>
+                    </ul>
+
                     <p style="margin-top: 1rem; font-size: 0.85rem; color: var(--text-primary);">
-                        💡 <strong>Note:</strong> This behavior applies to all historical fetches. You can change these settings in <a href="{{ request.scope.get('root_path', '') }}/setup" style="color: var(--primary-color); text-decoration: underline;">Settings</a>.
+                        💡 <strong>Tip:</strong> Change auto-add settings in <a href="{{ request.scope.get('root_path', '') }}/setup" style="color: var(--primary-color); text-decoration: underline;">Settings</a>.
                     </p>
                 </div>
             </div>
         </div>
         <div class="modal-footer">
             <button class="action-btn secondary" onclick="closeHistoricalUpdate()">Cancel</button>
-            <button class="action-btn primary" id="updateButton" onclick="handleUpdate()">Update Week</button>
+            <button class="action-btn primary" id="updateButton" onclick="handleUpdate()">Re-match Week</button>
         </div>
     </div>
 </div>
@@ -960,7 +1014,7 @@
 <div id="historicalWeekModal" class="modal">
     <div class="modal-content">
         <div class="modal-header">
-            <h3 id="historicalWeekTitle">Fetch Historical Week Data</h3>
+            <h3 id="historicalWeekTitle">Re-match Historical Week</h3>
             <button class="modal-close" onclick="closeHistoricalWeekModal()">&times;</button>
         </div>
         <div class="modal-body">
@@ -969,8 +1023,8 @@
                     <strong>📊 What will happen:</strong>
                 </p>
                 <ol style="font-size: 0.9rem; color: var(--text-secondary); margin: 0; padding-left: 1.5rem;">
-                    <li>Fetch box office data for <strong id="selectedWeekText">the selected week</strong></li>
-                    <li>Match movies against your Radarr library</li>
+                    <li>Load previously captured data for <strong id="selectedWeekText">the selected week</strong></li>
+                    <li>Re-match movies against your current Radarr library</li>
                     <li id="autoAddBehavior" style="font-weight: 600;">
                         {% if auto_add %}
                             <span style="color: var(--success-color);">✅ Missing movies will be AUTOMATICALLY added
@@ -984,16 +1038,16 @@
                     </li>
                 </ol>
             </div>
-            
+
             <div style="padding: 0.75rem; background: rgba(var(--info-rgb, 59, 130, 246), 0.1); border-radius: 8px; border: 1px solid rgba(var(--info-rgb, 59, 130, 246), 0.2);">
                 <p style="font-size: 0.85rem; color: var(--text-primary); margin: 0;">
-                    💡 <strong>Tip:</strong> To change auto-add behavior or filters, visit <a href="{{ request.scope.get('root_path', '') }}/setup" style="color: var(--primary-color); text-decoration: underline;">Settings</a>.
+                    💡 <strong>Note:</strong> This only works for weeks you've already captured. Trakt doesn't provide historical box office data.
                 </p>
             </div>
         </div>
         <div class="modal-footer">
             <button class="action-btn secondary" onclick="closeHistoricalWeekModal()">Cancel</button>
-            <button class="action-btn primary" onclick="fetchHistoricalWeek()">Fetch Week Data</button>
+            <button class="action-btn primary" onclick="fetchHistoricalWeek()">Re-match Week</button>
         </div>
     </div>
 </div>
@@ -1206,7 +1260,7 @@ class RangeProcessor {
         
         document.getElementById('progressTotal').textContent = this.weeks.length;
         document.getElementById('progressCurrent').textContent = '0';
-        document.getElementById('progressTitle').textContent = 'Updating Historical Range';
+        document.getElementById('progressTitle').textContent = 'Re-matching Historical Range';
     }
     
     updateProgress(current, message) {
@@ -1289,11 +1343,11 @@ function switchMode(mode) {
     if (mode === 'single') {
         document.getElementById('singleModePanel').style.display = 'block';
         document.getElementById('rangeModePanel').style.display = 'none';
-        document.getElementById('updateButton').textContent = 'Update Week';
+        document.getElementById('updateButton').textContent = 'Re-match Week';
     } else {
         document.getElementById('singleModePanel').style.display = 'none';
         document.getElementById('rangeModePanel').style.display = 'block';
-        document.getElementById('updateButton').textContent = 'Update Range';
+        document.getElementById('updateButton').textContent = 'Re-match Range';
         updateRangeSummary();
     }
 }
